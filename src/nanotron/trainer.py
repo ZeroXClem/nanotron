@@ -86,10 +86,30 @@ CONFIG_TO_MODEL_CLASS = {
 
 
 class DistributedTrainer:
-    def __init__(self, config_or_config_file: Union[Config, str], config_class: Type[Config] = Config):
+    def __init__(
+        self,
+        config_or_config_file: Union[Config, str],
+        config_class: Type[Config] = Config,
+        model_config_class: Optional[Type] = None,
+        model_class: Type[NanotronModel] = None,
+    ):
+        """
+        Nanotron's distributed trainer.
+
+        Args:
+            config_or_config_file: Either a `Config` object or a path to a YAML file containing the config.
+            config_class: The `Config` class to use.
+            model_config_class: The `ModelConfig` class to use (for example `LlamaConfig`). Defaults to `None` which will use the model config class defined in the config.
+            model_class: The `NanotronModel` class to use (for example `LlamaForTraining`). Defaults to `None` which will use the model class defined in the config.
+        """
+
         super().__init__()
-        self.config = get_config_from_file(config_or_config_file, config_class=config_class)
+        self.config = get_config_from_file(
+            config_or_config_file, config_class=config_class, model_config_class=model_config_class
+        )
         self.model_config = self.config.model.model_config
+        if model_class is not None:
+            CONFIG_TO_MODEL_CLASS[self.model_config.__class__.__name__] = model_class
 
         ########################################
         ## We start with setting up loggers and process groups
@@ -519,9 +539,8 @@ class DistributedTrainer:
                 )
                 self.model_config.max_position_embeddings = self.config.tokens.sequence_length
 
-        # log_rank(pformat(self.config), logger=logger, level=logging.INFO, rank=0)
-        log_rank(pformat(self.config), logger=logger, level=logging.INFO, rank=0)
-        log_rank(pformat(self.model_config), logger=logger, level=logging.INFO, rank=0)
+        log_rank("Config:\n" + pformat(self.config), logger=logger, level=logging.INFO, rank=0)
+        log_rank("Model Config:\n" + pformat(self.model_config), logger=logger, level=logging.INFO, rank=0)
 
         model_config_cls = self.model_config.__class__.__name__
         assert (
@@ -594,7 +613,9 @@ class DistributedTrainer:
         parallel_context = self.parallel_context
 
         parallel_config = config.parallelism
-        make_ddp = not (config.optimizer.accumulate_grad_in_fp32 and config.optimizer.zero_stage > 0)
+        make_ddp = parallel_context.data_parallel_size > 1 and not (
+            config.optimizer.accumulate_grad_in_fp32 and config.optimizer.zero_stage > 0
+        )
 
         # Build model and set pp ranks
         model = build_model(

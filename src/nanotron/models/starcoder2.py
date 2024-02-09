@@ -16,12 +16,11 @@
 
 Some dependencies to update before using:
  - install `torch>=2.0`
- - install `flash-attn>=2.4.2`
+ - install `flash-attn>=2.5.0`
  """
 
 import inspect
 import math
-import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -769,7 +768,7 @@ class CausalSelfMQA(nn.Module, AttachableStore):
                 # but [ False, False, False, False,  True,  True,  False,  False,  True,  True] is not (can't mask in the middle of sequence)
                 assert ~(
                     sequence_mask[:, :-1] & (~sequence_mask[:, 1:])  # True is never followed by False
-                ).any(), f"Can't mask in the middle of sequence, please use USE_FAST=0 instead.\nGot sequence_mask: {sequence_mask}"
+                ).any(), "Can't mask in the middle of sequence, please make sure that pads are at the left of the sequence if existing"
 
                 # preallocate k_cache, v_cache to self.prefill_kv_len
                 k_cache = torch.zeros(
@@ -1004,7 +1003,7 @@ class CausalSelfGQA(nn.Module, AttachableStore):
                 # but [ False, False, False, False,  True,  True,  False,  False,  True,  True] is not (can't mask in the middle of sequence)
                 assert ~(
                     sequence_mask[:, :-1] & (~sequence_mask[:, 1:])  # True is never followed by False
-                ).any(), f"Can't mask in the middle of sequence, please use USE_FAST=0 instead.\nGot sequence_mask: {sequence_mask}"
+                ).any(), "Can't mask in the middle of sequence, please make sure that pads are at the left of the sequence if existing"
 
                 # preallocate k_cache, v_cache to self.prefill_kv_len
                 k_cache = torch.zeros(
@@ -1554,8 +1553,7 @@ class Starcoder2ForTraining(NanotronModel):
 
                         assert full_param_name not in initialized_parameters
                         initialized_parameters.add(full_param_name)
-                elif os.environ.get("USE_FAST") and isinstance(module, MQAColumnLinears):
-                    # TODO @thomasw21: Handle the non fast version
+                elif isinstance(module, MQAColumnLinears):
                     # Somehow Megatron-LM does something super complicated, https://github.com/NVIDIA/Megatron-LM/blob/2360d732a399dd818d40cbe32828f65b260dee11/megatron/core/tensor_parallel/layers.py#L96
                     # What it does:
                     #  - instantiate a buffer of the `full size` in fp32
@@ -1632,7 +1630,7 @@ class Starcoder2ForTraining(NanotronModel):
     def get_block_compute_costs(self):
         """Computes the compute cost of each block in the model so that we can do a better job of load balancing."""
         model_config = self.config
-        d_ff = model_config.n_inner if model_config.n_inner is not None else 4 * model_config.hidden_size
+        d_ff = model_config.n_inner if model_config.intermediate_size is not None else 4 * model_config.hidden_size
         d_qkv = model_config.hidden_size // model_config.num_attention_heads
         block_compute_costs = {
             # CausalSelfAttention (qkv proj + attn out) + MLP
